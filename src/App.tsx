@@ -124,13 +124,18 @@ const Foliage = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
 };
 
 // --- Component: Photo Ornaments (Double-Sided Polaroid) ---
-const PhotoOrnaments = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
-  const textures = useTexture(CONFIG.photos.body);
+const PhotoOrnaments = ({ state, customPhotos }: { state: 'CHAOS' | 'FORMED', customPhotos?: string[] }) => {
+  // 使用自定义照片或默认照片
+  const photoUrls = customPhotos && customPhotos.length > 0 ? customPhotos : CONFIG.photos.body;
+  const textures = useTexture(photoUrls);
   const count = CONFIG.counts.ornaments;
   const groupRef = useRef<THREE.Group>(null);
 
   const borderGeometry = useMemo(() => new THREE.PlaneGeometry(1.2, 1.5), []);
   const photoGeometry = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
+
+  // 确保 textures 是数组
+  const textureArray = Array.isArray(textures) ? textures : [textures];
 
   const data = useMemo(() => {
     return new Array(count).fill(0).map((_, i) => {
@@ -155,7 +160,7 @@ const PhotoOrnaments = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
 
       return {
         chaosPos, targetPos, scale: baseScale, weight,
-        textureIndex: i % textures.length,
+        textureIndex: i % textureArray.length,
         borderColor,
         currentPos: chaosPos.clone(),
         chaosRotation,
@@ -164,7 +169,7 @@ const PhotoOrnaments = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
         wobbleSpeed: 0.5 + Math.random() * 0.5
       };
     });
-  }, [textures, count]);
+  }, [textureArray, count]);
 
   useFrame((stateObj, delta) => {
     if (!groupRef.current) return;
@@ -203,9 +208,9 @@ const PhotoOrnaments = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
           <group position={[0, 0, 0.015]}>
             <mesh geometry={photoGeometry}>
               <meshStandardMaterial
-                map={textures[obj.textureIndex]}
+                map={textureArray[obj.textureIndex]}
                 roughness={0.5} metalness={0}
-                emissive={CONFIG.colors.white} emissiveMap={textures[obj.textureIndex]} emissiveIntensity={1.0}
+                emissive={CONFIG.colors.white} emissiveMap={textureArray[obj.textureIndex]} emissiveIntensity={1.0}
                 side={THREE.FrontSide}
               />
             </mesh>
@@ -217,9 +222,9 @@ const PhotoOrnaments = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
           <group position={[0, 0, -0.015]} rotation={[0, Math.PI, 0]}>
             <mesh geometry={photoGeometry}>
               <meshStandardMaterial
-                map={textures[obj.textureIndex]}
+                map={textureArray[obj.textureIndex]}
                 roughness={0.5} metalness={0}
-                emissive={CONFIG.colors.white} emissiveMap={textures[obj.textureIndex]} emissiveIntensity={1.0}
+                emissive={CONFIG.colors.white} emissiveMap={textureArray[obj.textureIndex]} emissiveIntensity={1.0}
                 side={THREE.FrontSide}
               />
             </mesh>
@@ -380,7 +385,7 @@ const TopStar = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
 };
 
 // --- Main Scene Experience ---
-const Experience = ({ sceneState, rotationSpeed }: { sceneState: 'CHAOS' | 'FORMED', rotationSpeed: number }) => {
+const Experience = ({ sceneState, rotationSpeed, customPhotos }: { sceneState: 'CHAOS' | 'FORMED', rotationSpeed: number, customPhotos?: string[] }) => {
   const controlsRef = useRef<any>(null);
   useFrame(() => {
     if (controlsRef.current) {
@@ -406,7 +411,7 @@ const Experience = ({ sceneState, rotationSpeed }: { sceneState: 'CHAOS' | 'FORM
       <group position={[0, -6, 0]}>
         <Foliage state={sceneState} />
         <Suspense fallback={null}>
-           <PhotoOrnaments state={sceneState} />
+           <PhotoOrnaments state={sceneState} customPhotos={customPhotos} />
            <ChristmasElements state={sceneState} />
            <FairyLights state={sceneState} />
            <TopStar state={sceneState} />
@@ -509,12 +514,55 @@ export default function GrandTreeApp() {
   const [rotationSpeed, setRotationSpeed] = useState(0);
   const [aiStatus, setAiStatus] = useState("INITIALIZING...");
   const [debugMode, setDebugMode] = useState(false);
+  const [userPhotos, setUserPhotos] = useState<string[]>([]);
+  const [photoKey, setPhotoKey] = useState(0); // 用于强制重新渲染
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 处理用户上传照片
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const newPhotos: string[] = [];
+    let loadedCount = 0;
+
+    Array.from(files).forEach((file) => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          if (e.target?.result) {
+            newPhotos.push(e.target.result as string);
+          }
+          loadedCount++;
+          if (loadedCount === files.length) {
+            setUserPhotos(prev => [...prev, ...newPhotos]);
+            setPhotoKey(prev => prev + 1); // 触发重新渲染
+          }
+        };
+        reader.readAsDataURL(file);
+      } else {
+        loadedCount++;
+      }
+    });
+  };
+
+  // 清除用户照片
+  const clearUserPhotos = () => {
+    setUserPhotos([]);
+    setPhotoKey(prev => prev + 1);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // 获取当前使用的照片列表
+  const currentPhotos = userPhotos.length > 0 ? userPhotos : CONFIG.photos.body;
 
   return (
     <div style={{ width: '100vw', height: '100vh', backgroundColor: '#000', position: 'relative', overflow: 'hidden' }}>
       <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 1 }}>
         <Canvas dpr={[1, 2]} gl={{ toneMapping: THREE.ReinhardToneMapping }} shadows>
-            <Experience sceneState={sceneState} rotationSpeed={rotationSpeed} />
+            <Experience key={photoKey} sceneState={sceneState} rotationSpeed={rotationSpeed} customPhotos={currentPhotos} />
         </Canvas>
       </div>
       <GestureController onGesture={setSceneState} onMove={setRotationSpeed} onStatus={setAiStatus} debugMode={debugMode} />
@@ -533,10 +581,43 @@ export default function GrandTreeApp() {
             {(CONFIG.counts.foliage / 1000).toFixed(0)}K <span style={{ fontSize: '10px', color: '#555', fontWeight: 'normal' }}>EMERALD NEEDLES</span>
           </p>
         </div>
+        {userPhotos.length > 0 && (
+          <div style={{ marginTop: '15px' }}>
+            <p style={{ fontSize: '10px', letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '4px' }}>Your Photos</p>
+            <p style={{ fontSize: '24px', color: '#FF6B6B', fontWeight: 'bold', margin: 0 }}>
+              {userPhotos.length} <span style={{ fontSize: '10px', color: '#555', fontWeight: 'normal' }}>UPLOADED</span>
+            </p>
+          </div>
+        )}
       </div>
 
       {/* UI - Buttons */}
-      <div style={{ position: 'absolute', bottom: '30px', right: '40px', zIndex: 10, display: 'flex', gap: '10px' }}>
+      <div style={{ position: 'absolute', bottom: '30px', right: '40px', zIndex: 10, display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        {/* 隐藏的文件输入 */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={handleFileUpload}
+          style={{ display: 'none' }}
+        />
+        {/* 上传照片按钮 */}
+        <button 
+          onClick={() => fileInputRef.current?.click()} 
+          style={{ padding: '12px 15px', backgroundColor: 'rgba(0,0,0,0.5)', border: '1px solid #FF6B6B', color: '#FF6B6B', fontFamily: 'sans-serif', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(4px)' }}
+        >
+          📷 上传照片
+        </button>
+        {/* 清除照片按钮 */}
+        {userPhotos.length > 0 && (
+          <button 
+            onClick={clearUserPhotos} 
+            style={{ padding: '12px 15px', backgroundColor: 'rgba(0,0,0,0.5)', border: '1px solid #888', color: '#888', fontFamily: 'sans-serif', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(4px)' }}
+          >
+            ✕ 清除
+          </button>
+        )}
         <button onClick={() => setDebugMode(!debugMode)} style={{ padding: '12px 15px', backgroundColor: debugMode ? '#FFD700' : 'rgba(0,0,0,0.5)', border: '1px solid #FFD700', color: debugMode ? '#000' : '#FFD700', fontFamily: 'sans-serif', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(4px)' }}>
            {debugMode ? 'HIDE DEBUG' : '🛠 DEBUG'}
         </button>
@@ -549,6 +630,13 @@ export default function GrandTreeApp() {
       <div style={{ position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', color: aiStatus.includes('ERROR') ? '#FF0000' : 'rgba(255, 215, 0, 0.4)', fontSize: '10px', letterSpacing: '2px', zIndex: 10, background: 'rgba(0,0,0,0.5)', padding: '4px 8px', borderRadius: '4px' }}>
         {aiStatus}
       </div>
+
+      {/* 上传提示 */}
+      {userPhotos.length === 0 && (
+        <div style={{ position: 'absolute', top: '60px', left: '50%', transform: 'translateX(-50%)', color: 'rgba(255, 107, 107, 0.6)', fontSize: '12px', letterSpacing: '1px', zIndex: 10, background: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '4px', textAlign: 'center' }}>
+          💡 点击右下角「上传照片」添加你自己的照片到圣诞树上
+        </div>
+      )}
     </div>
   );
 }
