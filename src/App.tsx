@@ -27,7 +27,7 @@ import { GestureRecognizer, FilesetResolver, DrawingUtils } from "@mediapipe/tas
 // 使用内置的占位图片（彩色方块）作为默认
 const bodyPhotoPaths: string[] = [];
 
-// --- 视觉配置 ---
+// --- 视觉配置（已优化性能）---
 const CONFIG = {
   colors: {
     emerald: '#004225', // 纯正祖母绿
@@ -46,17 +46,17 @@ const CONFIG = {
     // 烟花颜色
     fireworkColors: ['#FF0000', '#FFD700', '#00FF00', '#FF69B4', '#00BFFF', '#FF4500', '#9400D3']
   },
+  // 优化：减少粒子数量以提升性能
   counts: {
-    foliage: 15000,
-    ornaments: 300,   // 拍立得照片数量
-    elements: 200,    // 圣诞元素数量
-    lights: 400,      // 彩灯数量
-    snowflakes: 1000, // 雪花数量
-    fireworkParticles: 100 // 每个烟花的粒子数
+    foliage: 8000,      // 从 15000 减少到 8000
+    ornaments: 150,     // 从 300 减少到 150
+    elements: 100,      // 从 200 减少到 100
+    lights: 200,        // 从 400 减少到 200
+    snowflakes: 500,    // 从 1000 减少到 500
+    fireworkParticles: 50 // 从 100 减少到 50
   },
   tree: { height: 22, radius: 9 }, // 树体尺寸
   photos: {
-    // top 属性不再需要，因为已经移入 body
     body: bodyPhotoPaths
   }
 };
@@ -606,7 +606,7 @@ const Experience = ({ sceneState, rotationSpeed, customPhotos, victoryMode }: { 
       <OrbitControls ref={controlsRef} enablePan={false} enableZoom={true} minDistance={30} maxDistance={120} autoRotate={rotationSpeed === 0 && sceneState === 'FORMED'} autoRotateSpeed={0.3} maxPolarAngle={Math.PI / 1.7} />
 
       <color attach="background" args={['#000300']} />
-      <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
+      <Stars radius={100} depth={50} count={2000} factor={4} saturation={0} fade speed={0.5} />
       <Environment preset="night" background={false} />
 
       <ambientLight intensity={0.4} color="#003311" />
@@ -622,16 +622,16 @@ const Experience = ({ sceneState, rotationSpeed, customPhotos, victoryMode }: { 
            <FairyLights state={sceneState} />
            <TopStar state={sceneState} />
         </Suspense>
-        <Sparkles count={600} scale={50} size={8} speed={0.4} opacity={0.4} color={CONFIG.colors.silver} />
+        <Sparkles count={300} scale={50} size={6} speed={0.3} opacity={0.4} color={CONFIG.colors.silver} />
         
         {/* Victory 模式特效：雪花和烟花 */}
         <Snowfall active={victoryMode || false} />
         <FireworksManager active={victoryMode || false} />
       </group>
 
-      <EffectComposer>
-        <Bloom luminanceThreshold={0.8} luminanceSmoothing={0.1} intensity={victoryMode ? 2.0 : 1.5} radius={0.5} mipmapBlur />
-        <Vignette eskil={false} offset={0.1} darkness={1.2} />
+      <EffectComposer multisampling={0}>
+        <Bloom luminanceThreshold={0.9} luminanceSmoothing={0.2} intensity={victoryMode ? 1.5 : 1.0} radius={0.3} mipmapBlur levels={3} />
+        <Vignette eskil={false} offset={0.1} darkness={1.0} />
       </EffectComposer>
     </>
   );
@@ -642,26 +642,78 @@ const Experience = ({ sceneState, rotationSpeed, customPhotos, victoryMode }: { 
 const GestureController = ({ onGesture, onMove, onStatus, debugMode }: any) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // 用于平滑手部位置的历史记录
+  const gestureRecognizerRef = useRef<GestureRecognizer | null>(null);
   const handPositionHistory = useRef<number[]>([]);
   const smoothedSpeed = useRef(0);
-  const isInitialized = useRef(false);
+  const animationRef = useRef<number>(0);
+  const [cameraReady, setCameraReady] = useState(false);
 
+  // 初始化摄像头和手势识别
   useEffect(() => {
-    let gestureRecognizer: GestureRecognizer | null = null;
-    let requestRef: number;
     let isMounted = true;
 
-    const setup = async () => {
-      if (isInitialized.current) return;
+    const initCamera = async () => {
+      onStatus("正在初始化摄像头...");
       
-      onStatus("DOWNLOADING AI...");
       try {
-        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+        // 1. 请求摄像头权限
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: 'user',
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          } 
+        });
+        
+        if (!isMounted) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.onloadedmetadata = () => {
+            if (videoRef.current && isMounted) {
+              videoRef.current.play().then(() => {
+                setCameraReady(true);
+                onStatus("摄像头已就绪，正在加载AI...");
+              });
+            }
+          };
+        }
+      } catch (err: any) {
+        console.error("摄像头错误:", err);
+        onStatus(`摄像头错误: ${err.message}`);
+      }
+    };
+
+    initCamera();
+
+    return () => {
+      isMounted = false;
+      if (videoRef.current?.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  // 初始化手势识别器
+  useEffect(() => {
+    if (!cameraReady) return;
+
+    let isMounted = true;
+
+    const initGestureRecognizer = async () => {
+      try {
+        onStatus("正在下载AI模型...");
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+        );
         
         if (!isMounted) return;
-        
-        gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
+
+        gestureRecognizerRef.current = await GestureRecognizer.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
             delegate: "GPU"
@@ -669,135 +721,163 @@ const GestureController = ({ onGesture, onMove, onStatus, debugMode }: any) => {
           runningMode: "VIDEO",
           numHands: 1
         });
-        
+
         if (!isMounted) return;
         
-        onStatus("REQUESTING CAMERA...");
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-            if (!isMounted) {
-              stream.getTracks().forEach(track => track.stop());
-              return;
-            }
-            if (videoRef.current) {
-              videoRef.current.srcObject = stream;
-              await videoRef.current.play();
-              isInitialized.current = true;
-              onStatus("AI READY: SHOW HAND");
-              predictWebcam();
-            }
-          } catch (camErr: any) {
-            console.error("Camera error:", camErr);
-            onStatus("CAMERA DISABLED - USE BUTTONS");
-          }
-        } else {
-          onStatus("CAMERA NOT SUPPORTED - USE BUTTONS");
-        }
+        onStatus("✋ 请对着摄像头展示手势");
+        startPrediction();
       } catch (err: any) {
-        console.error("Setup error:", err);
-        onStatus("AI DISABLED - USE BUTTONS");
+        console.error("AI初始化错误:", err);
+        onStatus(`AI错误: ${err.message}`);
       }
     };
 
-    const predictWebcam = () => {
-      if (!isMounted || !gestureRecognizer || !videoRef.current || !canvasRef.current) {
-        return;
-      }
+    const startPrediction = () => {
+      let lastPredictionTime = 0;
+      const PREDICTION_INTERVAL = 100; // 每100ms识别一次，降低CPU占用
       
-      try {
-        if (videoRef.current.videoWidth > 0) {
-            const results = gestureRecognizer.recognizeForVideo(videoRef.current, Date.now());
-            const ctx = canvasRef.current.getContext("2d");
-            if (ctx && debugMode) {
-                ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-                canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight;
-                if (results.landmarks) for (const landmarks of results.landmarks) {
-                        const drawingUtils = new DrawingUtils(ctx);
-                        drawingUtils.drawConnectors(landmarks, GestureRecognizer.HAND_CONNECTIONS, { color: "#FFD700", lineWidth: 2 });
-                        drawingUtils.drawLandmarks(landmarks, { color: "#FF0000", lineWidth: 1 });
-                }
-            } else if (ctx && !debugMode) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      const predict = () => {
+        if (!isMounted || !gestureRecognizerRef.current || !videoRef.current) {
+          return;
+        }
 
-            if (results.gestures.length > 0) {
-              const name = results.gestures[0][0].categoryName; const score = results.gestures[0][0].score;
-              if (score > 0.4) {
-                 if (name === "Open_Palm") onGesture("CHAOS"); 
-                 if (name === "Closed_Fist") onGesture("FORMED");
-                 if (name === "Victory") onGesture("VICTORY");
-                 if (debugMode) onStatus(`DETECTED: ${name}`);
-              }
-              
-              // 优化：使用手腕位置（landmark 0）计算旋转
-              if (results.landmarks.length > 0) {
-                const handX = results.landmarks[0][0].x; // 手腕 x 坐标 (0-1)
+        const now = performance.now();
+        // 限制识别频率
+        if (now - lastPredictionTime < PREDICTION_INTERVAL) {
+          animationRef.current = requestAnimationFrame(predict);
+          return;
+        }
+        lastPredictionTime = now;
+
+        if (videoRef.current.readyState >= 2 && videoRef.current.videoWidth > 0) {
+          try {
+            const results = gestureRecognizerRef.current.recognizeForVideo(
+              videoRef.current, 
+              now
+            );
+
+            // 绘制调试画面
+            if (canvasRef.current) {
+              const ctx = canvasRef.current.getContext("2d");
+              if (ctx) {
+                canvasRef.current.width = videoRef.current.videoWidth;
+                canvasRef.current.height = videoRef.current.videoHeight;
+                ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
                 
-                // 添加到历史记录用于平滑
+                if (results.landmarks && results.landmarks.length > 0) {
+                  for (const landmarks of results.landmarks) {
+                    const drawingUtils = new DrawingUtils(ctx);
+                    drawingUtils.drawConnectors(landmarks, GestureRecognizer.HAND_CONNECTIONS, { 
+                      color: "#00FF00", 
+                      lineWidth: 3 
+                    });
+                    drawingUtils.drawLandmarks(landmarks, { 
+                      color: "#FF0000", 
+                      lineWidth: 2,
+                      radius: 4
+                    });
+                  }
+                }
+              }
+            }
+
+            // 处理手势识别结果
+            if (results.gestures.length > 0 && results.landmarks.length > 0) {
+              const gesture = results.gestures[0][0];
+              const name = gesture.categoryName;
+              const score = gesture.score;
+
+              if (score > 0.5) {
+                // 手势识别
+                if (name === "Open_Palm") {
+                  onGesture("CHAOS");
+                } else if (name === "Closed_Fist") {
+                  onGesture("FORMED");
+                } else if (name === "Victory") {
+                  onGesture("VICTORY");
+                }
+
+                // 手部位置控制旋转
+                const handX = results.landmarks[0][0].x;
                 handPositionHistory.current.push(handX);
                 if (handPositionHistory.current.length > 5) {
                   handPositionHistory.current.shift();
                 }
-                
-                // 计算平均位置
                 const avgX = handPositionHistory.current.reduce((a, b) => a + b, 0) / handPositionHistory.current.length;
-                
-                // 计算速度：中心点为 0.5，偏离越多速度越快
-                // 增大灵敏度系数从 0.15 到 0.4，降低死区从 0.01 到 0.005
                 const rawSpeed = (0.5 - avgX) * 0.4;
-                
-                // 平滑过渡
                 smoothedSpeed.current = smoothedSpeed.current * 0.7 + rawSpeed * 0.3;
-                
-                // 更小的死区，让转动更灵敏
-                const deadzone = 0.005;
-                const finalSpeed = Math.abs(smoothedSpeed.current) > deadzone ? smoothedSpeed.current : 0;
-                
+                const finalSpeed = Math.abs(smoothedSpeed.current) > 0.005 ? smoothedSpeed.current : 0;
                 onMove(finalSpeed);
-                
-                if (debugMode) {
-                  const direction = finalSpeed > 0.01 ? "← 左转" : finalSpeed < -0.01 ? "右转 →" : "静止";
-                  onStatus(`${name} | ${direction} | 速度: ${finalSpeed.toFixed(3)}`);
-                }
+
+                const direction = finalSpeed > 0.01 ? "← 左转" : finalSpeed < -0.01 ? "右转 →" : "静止";
+                onStatus(`🖐 ${name} | ${direction}`);
               }
-            } else { 
-              // 没有检测到手时，平滑减速到 0
+            } else {
+              // 没有检测到手
               smoothedSpeed.current *= 0.9;
               if (Math.abs(smoothedSpeed.current) < 0.001) {
                 smoothedSpeed.current = 0;
               }
               onMove(smoothedSpeed.current);
               handPositionHistory.current = [];
-              if (debugMode) onStatus("AI READY: NO HAND"); 
+              onStatus("✋ 请展示手势: ✊握拳 ✋张开 ✌️胜利");
             }
+          } catch (err) {
+            console.error("识别错误:", err);
+          }
         }
-      } catch (err) {
-        console.error("Prediction error:", err);
-      }
-      
-      if (isMounted) {
-        requestRef = requestAnimationFrame(predictWebcam);
-      }
+
+        animationRef.current = requestAnimationFrame(predict);
+      };
+
+      predict();
     };
-    
-    setup();
-    
+
+    initGestureRecognizer();
+
     return () => {
       isMounted = false;
-      if (requestRef) {
-        cancelAnimationFrame(requestRef);
-      }
-      // 停止摄像头
-      if (videoRef.current?.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [onGesture, onMove, onStatus, debugMode]);
+  }, [cameraReady, onGesture, onMove, onStatus]);
 
   return (
     <>
-      <video ref={videoRef} style={{ opacity: debugMode ? 0.6 : 0, position: 'fixed', top: 0, right: 0, width: debugMode ? '320px' : '1px', zIndex: debugMode ? 100 : -1, pointerEvents: 'none', transform: 'scaleX(-1)' }} playsInline muted autoPlay />
-      <canvas ref={canvasRef} style={{ position: 'fixed', top: 0, right: 0, width: debugMode ? '320px' : '1px', height: debugMode ? 'auto' : '1px', zIndex: debugMode ? 101 : -1, pointerEvents: 'none', transform: 'scaleX(-1)' }} />
+      {/* 摄像头视频 - 始终显示在右上角 */}
+      <video 
+        ref={videoRef} 
+        style={{ 
+          position: 'fixed', 
+          top: 10, 
+          right: 10, 
+          width: debugMode ? '280px' : '160px',
+          height: 'auto',
+          borderRadius: '12px',
+          border: '3px solid #FFD700',
+          zIndex: 100,
+          transform: 'scaleX(-1)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+        }} 
+        playsInline 
+        muted 
+      />
+      {/* 手势骨架绘制层 */}
+      <canvas 
+        ref={canvasRef} 
+        style={{ 
+          position: 'fixed', 
+          top: 10, 
+          right: 10, 
+          width: debugMode ? '280px' : '160px',
+          height: 'auto',
+          borderRadius: '12px',
+          zIndex: 101,
+          pointerEvents: 'none',
+          transform: 'scaleX(-1)'
+        }} 
+      />
     </>
   );
 };
@@ -871,7 +951,17 @@ export default function GrandTreeApp() {
   return (
     <div style={{ width: '100vw', height: '100vh', backgroundColor: '#000', position: 'relative', overflow: 'hidden' }}>
       <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 1 }}>
-        <Canvas dpr={[1, 2]} gl={{ toneMapping: THREE.ReinhardToneMapping }} shadows>
+        <Canvas 
+          dpr={[1, 1.5]} 
+          gl={{ 
+            toneMapping: THREE.ReinhardToneMapping,
+            antialias: false,
+            powerPreference: 'high-performance',
+            stencil: false,
+            depth: true
+          }} 
+          performance={{ min: 0.5 }}
+        >
             <Experience key={photoKey} sceneState={sceneState} rotationSpeed={rotationSpeed} customPhotos={currentPhotos} victoryMode={victoryMode} />
         </Canvas>
       </div>
