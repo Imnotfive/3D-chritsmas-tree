@@ -16,13 +16,16 @@ import { MathUtils } from 'three';
 import * as random from 'maath/random';
 import { GestureRecognizer, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision";
 
-// --- 动态生成照片列表 (top.jpg + 1.jpg 到 31.jpg) ---
-const TOTAL_NUMBERED_PHOTOS = 31;
-// 修改：将 top.jpg 加入到数组开头
-const bodyPhotoPaths = [
-  '/photos/top.jpg',
-  ...Array.from({ length: TOTAL_NUMBERED_PHOTOS }, (_, i) => `/photos/${i + 1}.jpg`)
-];
+// --- 默认照片列表（留空，让用户上传自己的照片）---
+// 如果你有默认照片，可以放在 public/photos/ 目录下，然后取消下面的注释
+// const TOTAL_NUMBERED_PHOTOS = 31;
+// const bodyPhotoPaths = [
+//   '/photos/top.jpg',
+//   ...Array.from({ length: TOTAL_NUMBERED_PHOTOS }, (_, i) => `/photos/${i + 1}.jpg`)
+// ];
+
+// 使用内置的占位图片（彩色方块）作为默认
+const bodyPhotoPaths: string[] = [];
 
 // --- 视觉配置 ---
 const CONFIG = {
@@ -319,6 +322,17 @@ const Foliage = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
 const PhotoOrnaments = ({ state, customPhotos }: { state: 'CHAOS' | 'FORMED', customPhotos?: string[] }) => {
   // 使用自定义照片或默认照片
   const photoUrls = customPhotos && customPhotos.length > 0 ? customPhotos : CONFIG.photos.body;
+  
+  // 如果没有照片，不渲染任何内容
+  if (!photoUrls || photoUrls.length === 0) {
+    return null;
+  }
+  
+  return <PhotoOrnamentsInner state={state} photoUrls={photoUrls} />;
+};
+
+// 内部组件，只在有照片时渲染
+const PhotoOrnamentsInner = ({ state, photoUrls }: { state: 'CHAOS' | 'FORMED', photoUrls: string[] }) => {
   const textures = useTexture(photoUrls);
   const count = CONFIG.counts.ornaments;
   const groupRef = useRef<THREE.Group>(null);
@@ -932,8 +946,16 @@ export default function GrandTreeApp() {
 
       {/* 上传提示 */}
       {userPhotos.length === 0 && (
-        <div style={{ position: 'absolute', top: '60px', left: '50%', transform: 'translateX(-50%)', color: 'rgba(255, 107, 107, 0.6)', fontSize: '12px', letterSpacing: '1px', zIndex: 10, background: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '4px', textAlign: 'center' }}>
-          💡 点击右下角「上传照片」添加你自己的照片到圣诞树上
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: '#FFD700', fontSize: '18px', letterSpacing: '2px', zIndex: 10, background: 'rgba(0,0,0,0.8)', padding: '30px 40px', borderRadius: '12px', textAlign: 'center', border: '2px solid #FFD700' }}>
+          <div style={{ fontSize: '48px', marginBottom: '20px' }}>🎄</div>
+          <div style={{ marginBottom: '15px' }}>欢迎来到圣诞树！</div>
+          <div style={{ fontSize: '14px', color: '#888', marginBottom: '20px' }}>上传你的照片，创建专属圣诞树</div>
+          <button 
+            onClick={() => fileInputRef.current?.click()} 
+            style={{ padding: '15px 30px', backgroundColor: '#FFD700', border: 'none', color: '#000', fontFamily: 'sans-serif', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderRadius: '8px' }}
+          >
+            📷 上传照片开始
+          </button>
         </div>
       )}
     </div>
