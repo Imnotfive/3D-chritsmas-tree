@@ -631,15 +631,22 @@ const GestureController = ({ onGesture, onMove, onStatus, debugMode }: any) => {
   // 用于平滑手部位置的历史记录
   const handPositionHistory = useRef<number[]>([]);
   const smoothedSpeed = useRef(0);
+  const isInitialized = useRef(false);
 
   useEffect(() => {
-    let gestureRecognizer: GestureRecognizer;
+    let gestureRecognizer: GestureRecognizer | null = null;
     let requestRef: number;
+    let isMounted = true;
 
     const setup = async () => {
+      if (isInitialized.current) return;
+      
       onStatus("DOWNLOADING AI...");
       try {
         const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+        
+        if (!isMounted) return;
+        
         gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
@@ -648,25 +655,43 @@ const GestureController = ({ onGesture, onMove, onStatus, debugMode }: any) => {
           runningMode: "VIDEO",
           numHands: 1
         });
+        
+        if (!isMounted) return;
+        
         onStatus("REQUESTING CAMERA...");
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            videoRef.current.play();
-            onStatus("AI READY: SHOW HAND");
-            predictWebcam();
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+            if (!isMounted) {
+              stream.getTracks().forEach(track => track.stop());
+              return;
+            }
+            if (videoRef.current) {
+              videoRef.current.srcObject = stream;
+              await videoRef.current.play();
+              isInitialized.current = true;
+              onStatus("AI READY: SHOW HAND");
+              predictWebcam();
+            }
+          } catch (camErr: any) {
+            console.error("Camera error:", camErr);
+            onStatus("CAMERA DISABLED - USE BUTTONS");
           }
         } else {
-            onStatus("ERROR: CAMERA PERMISSION DENIED");
+          onStatus("CAMERA NOT SUPPORTED - USE BUTTONS");
         }
       } catch (err: any) {
-        onStatus(`ERROR: ${err.message || 'MODEL FAILED'}`);
+        console.error("Setup error:", err);
+        onStatus("AI DISABLED - USE BUTTONS");
       }
     };
 
     const predictWebcam = () => {
-      if (gestureRecognizer && videoRef.current && canvasRef.current) {
+      if (!isMounted || !gestureRecognizer || !videoRef.current || !canvasRef.current) {
+        return;
+      }
+      
+      try {
         if (videoRef.current.videoWidth > 0) {
             const results = gestureRecognizer.recognizeForVideo(videoRef.current, Date.now());
             const ctx = canvasRef.current.getContext("2d");
@@ -731,11 +756,28 @@ const GestureController = ({ onGesture, onMove, onStatus, debugMode }: any) => {
               if (debugMode) onStatus("AI READY: NO HAND"); 
             }
         }
+      } catch (err) {
+        console.error("Prediction error:", err);
+      }
+      
+      if (isMounted) {
         requestRef = requestAnimationFrame(predictWebcam);
       }
     };
+    
     setup();
-    return () => cancelAnimationFrame(requestRef);
+    
+    return () => {
+      isMounted = false;
+      if (requestRef) {
+        cancelAnimationFrame(requestRef);
+      }
+      // 停止摄像头
+      if (videoRef.current?.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
   }, [onGesture, onMove, onStatus, debugMode]);
 
   return (
